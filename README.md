@@ -1,3 +1,3 @@
 # .github
 
-This repo contains defaults for all repositories.
+Templates for all repositories.
