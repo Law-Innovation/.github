@@ -7,3 +7,11 @@
 - [ ] Unit test
 - [ ] Integration test
 - [ ] E2E test
+
+## Are your changes documented?
+
+- [ ] README
+
+## Are your changes deployed?
+
+- [ ] yes (where?)
