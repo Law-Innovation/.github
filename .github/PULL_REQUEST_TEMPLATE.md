@@ -12,6 +12,6 @@
 
 - [ ] README
 
-## Are your changes deployed?
+## Are your changes published/deployed?
 
-- [ ] yes (where?)
+- [ ] yes (where?, version?)
