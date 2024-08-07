@@ -8,10 +8,6 @@
 - [ ] Integration test
 - [ ] E2E test
 
-## Are your changes documented?
+## Was a changeset commited for publishing?
 
-- [ ] README
-
-## Are your changes published/deployed?
-
-- [ ] yes (where?, version?)
+- [ ] yes (package?, version?)
