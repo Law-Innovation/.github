@@ -1,0 +1,125 @@
+name: Version and Tag (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      tag_prefix:
+        description: 'Tag prefix (e.g., analytics-pipeline@, consenter-cb@)'
+        required: true
+        type: string
+      semver_type:
+        description: 'patch, minor, or major'
+        required: true
+        type: string
+    outputs:
+      version:
+        description: 'The calculated version (e.g., 1.2.3 or 1.2.3-rc.0)'
+        value: ${{ jobs.version.outputs.version }}
+      tag:
+        description: 'The full tag (e.g., analytics-pipeline@1.2.3)'
+        value: ${{ jobs.version.outputs.tag }}
+      is_prerelease:
+        description: 'Whether this is a prerelease'
+        value: ${{ jobs.version.outputs.is_prerelease }}
+      release_type:
+        description: 'stable or release-candidate'
+        value: ${{ jobs.version.outputs.release_type }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.set-version.outputs.tag }}
+      tag: ${{ steps.tag_version.outputs.new_tag }}
+      is_prerelease: ${{ steps.set-version.outputs.is_prerelease }}
+      release_type: ${{ steps.determine-release-type.outputs.release_type }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine release type based on branch
+        id: determine-release-type
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "release_type=stable" >> $GITHUB_OUTPUT
+            echo "✅ Main branch detected → STABLE release"
+          else
+            echo "release_type=release-candidate" >> $GITHUB_OUTPUT
+            echo "✅ Feature branch detected → RELEASE CANDIDATE"
+          fi
+
+      - name: Get current version and calculate new version
+        id: version-calc
+        run: |
+          PREFIX="${{ inputs.tag_prefix }}"
+          LATEST_STABLE_TAG=$(git tag -l "${PREFIX}*" | grep -v -- "-rc\." | sort -V | tail -1 2>/dev/null || echo "${PREFIX}0.0.0")
+          CURRENT_VERSION=$(echo $LATEST_STABLE_TAG | sed "s/${PREFIX}//")
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+
+          case "${{ inputs.semver_type }}" in
+            "major")
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            "minor")
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            "patch")
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+
+          if [ "${{ steps.determine-release-type.outputs.release_type }}" = "release-candidate" ]; then
+            RC_NUM=0
+            while git rev-parse --verify --quiet "refs/tags/${PREFIX}$NEW_VERSION-rc.$RC_NUM" > /dev/null 2>&1; do
+              RC_NUM=$((RC_NUM + 1))
+            done
+            echo "rc_number=$RC_NUM" >> $GITHUB_OUTPUT
+          fi
+
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Set version and tag
+        id: set-version
+        run: |
+          RELEASE_TYPE="${{ steps.determine-release-type.outputs.release_type }}"
+          NEW_VERSION="${{ steps.version-calc.outputs.new_version }}"
+
+          case "$RELEASE_TYPE" in
+            "release-candidate")
+              RC_NUM="${{ steps.version-calc.outputs.rc_number }}"
+              echo "tag=$NEW_VERSION-rc.$RC_NUM" >> $GITHUB_OUTPUT
+              echo "is_prerelease=true" >> $GITHUB_OUTPUT
+              ;;
+            "stable")
+              echo "tag=$NEW_VERSION" >> $GITHUB_OUTPUT
+              echo "is_prerelease=false" >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+      - name: Create git tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          custom_tag: ${{ steps.set-version.outputs.tag }}
+          tag_prefix: ${{ inputs.tag_prefix }}
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_version.outputs.new_tag }}
+          name: ${{ steps.tag_version.outputs.new_tag }}
+          body: ${{ steps.tag_version.outputs.changelog }}
+          prerelease: ${{ steps.set-version.outputs.is_prerelease }}
+          draft: false
