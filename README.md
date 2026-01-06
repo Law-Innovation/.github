@@ -12,6 +12,7 @@ Standardized PR template used across all repositories. Automatically applied whe
 
 **Sections:**
 - **Description** - Describe changes and include Jira ticket number in PR title
+- **Version Bump** - Check one: Major, Minor, or Patch (used for auto-release on merge)
 - **Was this deployed?** - Checklist for staging/production deployment status
 - **How Has This Been Tested?** - Test coverage checklist (Manual, Unit, Integration, E2E)
 
@@ -43,6 +44,53 @@ jobs:
 - `tag`: Full tag (e.g., analytics-pipeline@1.2.3)
 - `is_prerelease`: Whether this is a prerelease (true/false)
 - `release_type`: stable or release-candidate
+
+### 2. Auto Release on Merge
+
+**Path:** `.github/workflows/auto-release-on-merge.yml`
+
+Automatically creates releases when PRs are merged to main, based on checkboxes in the PR description.
+
+**How it works:**
+1. Developer checks a box in PR description:
+   - `[x] Major` - Breaking changes
+   - `[x] Minor` - New features (backwards compatible)
+   - `[x] Patch` - Bug fixes
+2. On merge to main → automatically creates version tag and release
+3. **If no checkbox checked:**
+   - Workflow fails with error notification
+   - User receives email about failed workflow
+   - User can manually re-trigger workflow and select version bump type
+
+**Usage:**
+```yaml
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      semverType:
+        description: 'Version bump type (if PR checkbox was not selected)'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+jobs:
+  auto-release:
+    uses: Law-Innovation/.github/.github/workflows/auto-release-on-merge.yml@main
+    with:
+      tag_prefix: 'your-app@'
+      default_bump: ${{ github.event.inputs.semverType || 'patch' }}
+```
+
+**Outputs:**
+- `version`: The calculated version
+- `tag`: The full tag
+- `semver_type`: The semver type used (major/minor/patch)
 
 ## Organizational Standards
 

@@ -1,0 +1,124 @@
+name: Auto Release on Merge (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      tag_prefix:
+        description: 'Tag prefix (e.g., analytics-pipeline@)'
+        required: true
+        type: string
+      default_bump:
+        description: 'Default version bump if no label found (patch/minor/major)'
+        required: false
+        type: string
+        default: 'patch'
+    outputs:
+      version:
+        description: 'The calculated version'
+        value: ${{ jobs.determine-and-release.outputs.version }}
+      tag:
+        description: 'The full tag'
+        value: ${{ jobs.determine-and-release.outputs.tag }}
+      semver_type:
+        description: 'The semver type used'
+        value: ${{ jobs.determine-and-release.outputs.semver_type }}
+
+jobs:
+  determine-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      version: ${{ steps.version-workflow.outputs.version }}
+      tag: ${{ steps.version-workflow.outputs.tag }}
+      semver_type: ${{ steps.determine-semver.outputs.semver_type }}
+    steps:
+      - name: Get merged PR
+        id: get-pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const commit = context.payload.head_commit;
+            if (!commit) {
+              core.setFailed('No commit found');
+              return;
+            }
+
+            // Find PR associated with this merge commit
+            const prs = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: commit.id
+            });
+
+            if (prs.data.length === 0) {
+              console.log('No PR found for this commit, will use default bump');
+              return;
+            }
+
+            const pr = prs.data[0];
+            const labels = pr.labels.map(l => l.name);
+
+            core.setOutput('pr_number', pr.number);
+            core.setOutput('labels', JSON.stringify(labels));
+
+            console.log(`Found PR #${pr.number} with labels: ${labels.join(', ')}`);
+
+      - name: Get PR body
+        if: steps.get-pr.outputs.pr_number != ''
+        id: get-pr-body
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: ${{ steps.get-pr.outputs.pr_number }}
+            });
+
+            core.setOutput('body', pr.data.body || '');
+
+      - name: Determine semver type from PR description checkboxes
+        id: determine-semver
+        run: |
+          PR_BODY='${{ steps.get-pr-body.outputs.body }}'
+          DEFAULT_BUMP="${{ inputs.default_bump }}"
+
+          # Look for checked boxes in PR description
+          # Checked box: - [x] or - [X]
+          if echo "$PR_BODY" | grep -iE "^\s*-\s*\[x\]\s*Major" > /dev/null; then
+            SEMVER_TYPE="major"
+            echo "✅ Found checked: Major"
+          elif echo "$PR_BODY" | grep -iE "^\s*-\s*\[x\]\s*Minor" > /dev/null; then
+            SEMVER_TYPE="minor"
+            echo "✅ Found checked: Minor"
+          elif echo "$PR_BODY" | grep -iE "^\s*-\s*\[x\]\s*Patch" > /dev/null; then
+            SEMVER_TYPE="patch"
+            echo "✅ Found checked: Patch"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual trigger - use provided default
+            SEMVER_TYPE="$DEFAULT_BUMP"
+            echo "✅ Manual trigger - using: $SEMVER_TYPE"
+          else
+            # Auto-trigger but no checkbox - FAIL
+            echo "::error::❌ No version bump checkbox selected in PR description!"
+            echo ""
+            echo "Please ensure one of these is checked in the PR description:"
+            echo "  - [ ] Major - Breaking changes"
+            echo "  - [ ] Minor - New features (backwards compatible)"
+            echo "  - [ ] Patch - Bug fixes"
+            echo ""
+            echo "To fix: Manually run this workflow and select the version bump type."
+            exit 1
+          fi
+
+          echo "semver_type=$SEMVER_TYPE" >> $GITHUB_OUTPUT
+          echo "✅ Using semver type: $SEMVER_TYPE"
+
+      - name: Call version-and-tag workflow
+        id: version-workflow
+        uses: Law-Innovation/.github/.github/workflows/version-and-tag.yml@main
+        with:
+          tag_prefix: ${{ inputs.tag_prefix }}
+          semver_type: ${{ steps.determine-semver.outputs.semver_type }}
