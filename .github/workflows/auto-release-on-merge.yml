@@ -22,6 +22,9 @@ on:
       semver_type:
         description: 'The semver type used'
         value: ${{ jobs.determine-semver.outputs.semver_type }}
+      skip:
+        description: 'Whether auto-release was skipped (no checkbox found)'
+        value: ${{ jobs.determine-semver.outputs.skip }}
 
 jobs:
   determine-semver:
@@ -30,6 +33,7 @@ jobs:
       pull-requests: read
     outputs:
       semver_type: ${{ steps.determine-semver.outputs.semver_type }}
+      skip: ${{ steps.determine-semver.outputs.skip }}
     steps:
       - name: Get merged PR
         id: get-pr
@@ -94,23 +98,19 @@ jobs:
             SEMVER_TYPE="$DEFAULT_BUMP"
             echo "✅ Manual trigger - using: $SEMVER_TYPE"
           else
-            # Auto-trigger but no checkbox - FAIL
-            echo "::error::❌ No version bump checkbox selected in PR description!"
-            echo ""
-            echo "Please ensure one of these is checked in the PR description:"
-            echo "  - [ ] Major - Breaking changes"
-            echo "  - [ ] Minor - New features (backwards compatible)"
-            echo "  - [ ] Patch - Bug fixes"
-            echo ""
-            echo "To fix: Manually run this workflow and select the version bump type."
-            exit 1
+            # No checkbox found - skip release
+            echo "⚠️ No version bump checkbox found - skipping auto-release"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
           echo "semver_type=$SEMVER_TYPE" >> $GITHUB_OUTPUT
+          echo "skip=false" >> $GITHUB_OUTPUT
           echo "✅ Using semver type: $SEMVER_TYPE"
 
   version-and-tag:
     needs: determine-semver
+    if: needs.determine-semver.outputs.skip != 'true'
     uses: Law-Innovation/.github/.github/workflows/version-and-tag.yml@main
     with:
       tag_prefix: ${{ inputs.tag_prefix }}
