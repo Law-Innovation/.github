@@ -15,23 +15,20 @@ on:
     outputs:
       version:
         description: 'The calculated version'
-        value: ${{ jobs.determine-and-release.outputs.version }}
+        value: ${{ jobs.version-and-tag.outputs.version }}
       tag:
         description: 'The full tag'
-        value: ${{ jobs.determine-and-release.outputs.tag }}
+        value: ${{ jobs.version-and-tag.outputs.tag }}
       semver_type:
         description: 'The semver type used'
-        value: ${{ jobs.determine-and-release.outputs.semver_type }}
+        value: ${{ jobs.determine-semver.outputs.semver_type }}
 
 jobs:
-  determine-and-release:
+  determine-semver:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
       pull-requests: read
     outputs:
-      version: ${{ steps.version-workflow.outputs.version }}
-      tag: ${{ steps.version-workflow.outputs.tag }}
       semver_type: ${{ steps.determine-semver.outputs.semver_type }}
     steps:
       - name: Get merged PR
@@ -41,7 +38,7 @@ jobs:
           script: |
             const commit = context.payload.head_commit;
             if (!commit) {
-              core.setFailed('No commit found');
+              console.log('No commit found, will use default bump');
               return;
             }
 
@@ -58,12 +55,8 @@ jobs:
             }
 
             const pr = prs.data[0];
-            const labels = pr.labels.map(l => l.name);
-
             core.setOutput('pr_number', pr.number);
-            core.setOutput('labels', JSON.stringify(labels));
-
-            console.log(`Found PR #${pr.number} with labels: ${labels.join(', ')}`);
+            console.log(`Found PR #${pr.number}`);
 
       - name: Get PR body
         if: steps.get-pr.outputs.pr_number != ''
@@ -116,9 +109,9 @@ jobs:
           echo "semver_type=$SEMVER_TYPE" >> $GITHUB_OUTPUT
           echo "✅ Using semver type: $SEMVER_TYPE"
 
-      - name: Call version-and-tag workflow
-        id: version-workflow
-        uses: Law-Innovation/.github/.github/workflows/version-and-tag.yml@main
-        with:
-          tag_prefix: ${{ inputs.tag_prefix }}
-          semver_type: ${{ steps.determine-semver.outputs.semver_type }}
+  version-and-tag:
+    needs: determine-semver
+    uses: Law-Innovation/.github/.github/workflows/version-and-tag.yml@main
+    with:
+      tag_prefix: ${{ inputs.tag_prefix }}
+      semver_type: ${{ needs.determine-semver.outputs.semver_type }}
