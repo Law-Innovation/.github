@@ -1,0 +1,43 @@
+name: Label Lint (Reusable)
+
+on:
+  workflow_call: {}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Validate release labels
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const names = context.payload.pull_request.labels.map((l) => l.name)
+            const releaseLabels = names.filter((n) => n.startsWith('release:'))
+            const valid = /^release:(?:staging:)?(major|minor|patch)$/
+
+            const invalid = releaseLabels.filter((n) => !valid.test(n))
+            if (invalid.length) {
+              core.setFailed(
+                `Invalid release label(s): ${invalid.join(', ')}. ` +
+                  'Use release:{major,minor,patch} or release:staging:{major,minor,patch}.'
+              )
+              return
+            }
+            if (releaseLabels.length > 1) {
+              core.setFailed(
+                `Multiple release labels (${releaseLabels.join(', ')}). Pick exactly one.`
+              )
+              return
+            }
+            if (releaseLabels.length === 0 && !names.includes('no-release')) {
+              core.setFailed(
+                'No release intent. Add one release:* label to ship on merge, ' +
+                  'or the "no-release" label to merge without releasing.'
+              )
+              return
+            }
+            core.info(
+              releaseLabels.length ? `OK: ${releaseLabels[0]}` : 'OK: no-release'
+            )

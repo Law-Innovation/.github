@@ -11,6 +11,11 @@ on:
         description: 'patch, minor, or major'
         required: true
         type: string
+      release_type:
+        description: 'stable | release-candidate; empty falls back to branch-based detection'
+        required: false
+        type: string
+        default: ''
     outputs:
       version:
         description: 'The calculated version (e.g., 1.2.3 or 1.2.3-rc.0)'
@@ -37,31 +42,39 @@ jobs:
       release_type: ${{ steps.determine-release-type.outputs.release_type }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
 
-      - name: Determine release type based on branch
+      - name: Determine release type
         id: determine-release-type
+        env:
+          RELEASE_TYPE_INPUT: ${{ inputs.release_type }}
         run: |
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "release_type=stable" >> $GITHUB_OUTPUT
+          if [ -n "$RELEASE_TYPE_INPUT" ]; then
+            echo "release_type=$RELEASE_TYPE_INPUT" >> "$GITHUB_OUTPUT"
+            echo "✅ Using provided release type → $RELEASE_TYPE_INPUT"
+          elif [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            echo "release_type=stable" >> "$GITHUB_OUTPUT"
             echo "✅ Main branch detected → STABLE release"
           else
-            echo "release_type=release-candidate" >> $GITHUB_OUTPUT
+            echo "release_type=release-candidate" >> "$GITHUB_OUTPUT"
             echo "✅ Feature branch detected → RELEASE CANDIDATE"
           fi
 
       - name: Get current version and calculate new version
         id: version-calc
+        env:
+          PREFIX: ${{ inputs.tag_prefix }}
+          SEMVER_TYPE: ${{ inputs.semver_type }}
+          RELEASE_TYPE: ${{ steps.determine-release-type.outputs.release_type }}
         run: |
-          PREFIX="${{ inputs.tag_prefix }}"
           LATEST_STABLE_TAG=$(git tag -l "${PREFIX}*" | grep -v -- "-rc\." | sort -V | tail -1 2>/dev/null || echo "${PREFIX}0.0.0")
-          CURRENT_VERSION=$(echo $LATEST_STABLE_TAG | sed "s/${PREFIX}//")
+          CURRENT_VERSION="${LATEST_STABLE_TAG#"$PREFIX"}"
 
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
 
-          case "${{ inputs.semver_type }}" in
+          case "$SEMVER_TYPE" in
             "major")
               MAJOR=$((MAJOR + 1))
               MINOR=0
@@ -78,45 +91,45 @@ jobs:
 
           NEW_VERSION="$MAJOR.$MINOR.$PATCH"
 
-          if [ "${{ steps.determine-release-type.outputs.release_type }}" = "release-candidate" ]; then
+          if [ "$RELEASE_TYPE" = "release-candidate" ]; then
             RC_NUM=0
             while git rev-parse --verify --quiet "refs/tags/${PREFIX}$NEW_VERSION-rc.$RC_NUM" > /dev/null 2>&1; do
               RC_NUM=$((RC_NUM + 1))
             done
-            echo "rc_number=$RC_NUM" >> $GITHUB_OUTPUT
+            echo "rc_number=$RC_NUM" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Set version and tag
         id: set-version
+        env:
+          RELEASE_TYPE: ${{ steps.determine-release-type.outputs.release_type }}
+          NEW_VERSION: ${{ steps.version-calc.outputs.new_version }}
+          RC_NUM: ${{ steps.version-calc.outputs.rc_number }}
         run: |
-          RELEASE_TYPE="${{ steps.determine-release-type.outputs.release_type }}"
-          NEW_VERSION="${{ steps.version-calc.outputs.new_version }}"
-
           case "$RELEASE_TYPE" in
             "release-candidate")
-              RC_NUM="${{ steps.version-calc.outputs.rc_number }}"
-              echo "tag=$NEW_VERSION-rc.$RC_NUM" >> $GITHUB_OUTPUT
-              echo "is_prerelease=true" >> $GITHUB_OUTPUT
+              echo "tag=$NEW_VERSION-rc.$RC_NUM" >> "$GITHUB_OUTPUT"
+              echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
               ;;
             "stable")
-              echo "tag=$NEW_VERSION" >> $GITHUB_OUTPUT
-              echo "is_prerelease=false" >> $GITHUB_OUTPUT
+              echo "tag=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+              echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
               ;;
           esac
 
       - name: Create git tag
         id: tag_version
-        uses: mathieudutour/github-tag-action@v6.2
+        uses: mathieudutour/github-tag-action@a22cf08638b34d5badda920f9daf6e72c477b07b # v6.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           custom_tag: ${{ steps.set-version.outputs.tag }}
           tag_prefix: ${{ inputs.tag_prefix }}
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           tag_name: ${{ steps.tag_version.outputs.new_tag }}
           name: ${{ steps.tag_version.outputs.new_tag }}
